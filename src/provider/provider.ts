@@ -55,82 +55,62 @@ export class Provider {
   }
 
   async pushPsbt({
-  psbtHex,
-  psbtBase64,
+    psbtHex,
+    psbtBase64,
   }: {
-  psbtHex?: string
-  psbtBase64?: string
+    psbtHex?: string
+    psbtBase64?: string
   }) {
-  if (!psbtHex && !psbtBase64) {
-    throw new Error('Please supply psbt in either base64 or hex format');
-  }
-  if (psbtHex && psbtBase64) {
-    throw new Error('Please select one format of psbt to broadcast');
-  }
+    if (!psbtHex && !psbtBase64) {
+      throw new Error('Please supply psbt in either base64 or hex format')
+    }
+    if (psbtHex && psbtBase64) {
+      throw new Error('Please select one format of psbt to broadcast')
+    }
+    let psbt: bitcoin.Psbt
+    if (psbtHex) {
+      psbt = bitcoin.Psbt.fromHex(psbtHex, {
+        network: this.network,
+      })
+    }
 
-  let psbt: bitcoin.Psbt;
-  if (psbtHex) {
-    psbt = bitcoin.Psbt.fromHex(psbtHex, {
-      network: this.network,
-    });
-  }
+    if (psbtBase64) {
+      psbt = bitcoin.Psbt.fromBase64(psbtBase64, {
+        network: this.network,
+      })
+    }
 
-  if (psbtBase64) {
-    psbt = bitcoin.Psbt.fromBase64(psbtBase64, {
-      network: this.network,
-    });
-  }
+    let extractedTx: bitcoin.Transaction
+    try {
+      extractedTx = psbt.extractTransaction()
+    } catch (error) {
+      throw new Error('Transaction could not be extracted do to invalid Psbt.')
+    }
+    const txId = extractedTx.getId()
+    const rawTx = extractedTx.toHex()
 
-  let extractedTx: bitcoin.Transaction;
-  try {
-    extractedTx = psbt.extractTransaction();
-  } catch (error) {
-    throw new Error('Transaction could not be extracted due to invalid Psbt.');
-  }
+    const [result] = await this.sandshrew.bitcoindRpc.testMemPoolAccept([rawTx])
 
-  const txId = extractedTx.getId();
-  const rawTx = extractedTx.toHex();
+    if (!result.allowed) {
+      throw new Error(result['reject-reason'])
+    }
+    await this.sandshrew.bitcoindRpc.sendRawTransaction(rawTx)
 
-  // 🔒 Broadcasting is disabled by default
-  const BROADCAST_ENABLED = false;
+    await waitForTransaction({
+      txId,
+      sandshrewBtcClient: this.sandshrew,
+    })
 
-  if (!BROADCAST_ENABLED) {
-    console.log('Broadcast disabled.');
-    console.log('Raw signed transaction (hex):', rawTx);
+    const txInMemPool = await this.sandshrew.bitcoindRpc.getMemPoolEntry(txId)
+    const fee = txInMemPool.fees['base'] * 10 ** 8
+
     return {
       txId,
       rawTx,
-      size: rawTx.length / 2, // size in bytes
-      weight: rawTx.length,   // approximate weight
-      fee: null,
-      satsPerVByte: null,
-    };
+      size: txInMemPool.vsize,
+      weight: txInMemPool.weight,
+      fee: fee,
+      satsPerVByte: (fee / (txInMemPool.weight / 4)).toFixed(2),
+    }
   }
-
-  const [result] = await this.sandshrew.bitcoindRpc.testMemPoolAccept([rawTx]);
-
-  if (!result.allowed) {
-    throw new Error(result['reject-reason']);
-  }
-
-  await this.sandshrew.bitcoindRpc.sendRawTransaction(rawTx);
-
-  await waitForTransaction({
-    txId,
-    sandshrewBtcClient: this.sandshrew,
-  });
-
-  const txInMemPool = await this.sandshrew.bitcoindRpc.getMemPoolEntry(txId);
-  const fee = txInMemPool.fees['base'] * 10 ** 8;
-
-  return {
-    txId,
-    rawTx,
-    size: txInMemPool.vsize,
-    weight: txInMemPool.weight,
-    fee: fee,
-    satsPerVByte: (fee / (txInMemPool.weight / 4)).toFixed(2),
-  };
-  }
-
 }
