@@ -422,11 +422,11 @@ export const deployCommit = async ({
     finalize: true,
   })
 
-  const result = await provider.pushPsbt({
-    psbtBase64: signedPsbt,
-  })
+  console.log("Signed PSBT (base64):", signedPsbt);
+  return signedPsbt;
 
-  return { ...result, script: script.toString('hex') }
+
+  // return { ...result, script: script.toString('hex') }
 }
 
 export const createDeployRevealPsbt = async ({
